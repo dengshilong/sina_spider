@@ -1,3 +1,7 @@
+import queue
+import threading
+from collections import namedtuple
+
 import click
 import urllib.request
 from bs4 import BeautifulSoup
@@ -11,6 +15,7 @@ formatter = logging.Formatter(
 handler.setFormatter(formatter)
 LOGGER.addHandler(handler)
 
+Website = namedtuple('Website', ['url', 'deep', 'max_deep'])
 
 def get_repsonse(url):
     """
@@ -44,19 +49,23 @@ def save_url(url, response):
     pass
 
 
-def spider(url, deep):
-    if url in old_urls or deep == 0:
+def do_work(item, q):
+    LOGGER.info("current thread {}".format(threading.current_thread().name))
+    url = item.url
+    if url in old_urls:
         return
     print(url)
-    LOGGER.info('crawling {}'.format(url))
+    LOGGER.info('crawling {}, deep {} max_deep {}'.format(url, item.deep, item.max_deep))
     response = get_repsonse(url)
     if not response:
         return
     save_url(url, response)
     old_urls.add(url)
+    if item.deep == item.max_deep:
+        return
     urls = get_all_urls(response)
     for u in urls:
-        spider(u, deep - 1)
+        q.put(Website(u, item.deep + 1, item.max_deep))
 
 def process_log(file, level):
     handler = logging.FileHandler(filename=file)
@@ -77,6 +86,14 @@ def process_log(file, level):
     return LOGGER
 
 
+def worker(q):
+    while True:
+        item = q.get()
+        if item is None:
+            break
+        do_work(item, q)
+        q.task_done()
+
 @click.command()
 @click.option('--url', '-u', help='seed url')
 @click.option('--deep', '-d', default=1,
@@ -86,14 +103,29 @@ def process_log(file, level):
 @click.option('--level', '-l', default=1,
               help='log level')
 @click.option('--testself', is_flag=True)
-def main(url, deep, file, level, testself):
+@click.option('--thread', '-t', default=10,
+              help='thread number')
+def main(url, deep, file, level, testself, thread):
     if testself:
         import doctest
         doctest.testmod()
         return
     process_log(file, level)
-    spider(url, deep)
+    q = queue.Queue()
+    threads = []
+    for i in range(thread):
+        t = threading.Thread(target=worker, args=(q,))
+        t.start()
+        threads.append(t)
 
+    q.put(Website(url, 0, deep))
+    # block until all tasks are done
+    q.join()
+    # stop workers
+    for i in range(thread):
+        q.put(None)
+    for t in threads:
+        t.join()
 
 if __name__ == "__main__":
     main()
