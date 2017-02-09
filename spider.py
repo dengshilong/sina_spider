@@ -7,10 +7,11 @@ old_urls = set()
 
 
 def get_repsonse(url):
-    response = urllib.request.urlopen(url).read()
-    print(response[0:300])
-    return response
-
+    try:
+        response = urllib.request.urlopen(url).read()
+        return response
+    except Exception as e:
+        print(e)
 
 def get_all_urls(response):
     soup = BeautifulSoup(response, 'html.parser')
